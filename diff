@@ -1,10 +1,10 @@
 /*------------------------------------------------------------------------------
--- 개체 이름: IPARKUSER.PKG_FAAEI01
--- 만든 날짜: 2017-11-28 오전 8:49:49
--- 마지막으로 수정한 날짜: 2018-08-20 오전 10:15:34
+-- 개체 이름: IPARKTEST.PKG_FAAEI01
+-- 만든 날짜: 2017-11-28 오전 10:10:57
+-- 마지막으로 수정한 날짜: 2018-08-17 오후 5:23:05
 -- 상태: VALID
 ------------------------------------------------------------------------------*/
-CREATE OR REPLACE PACKAGE BODY IPARKUSER.PKG_FAAEI01 AS
+CREATE OR REPLACE PACKAGE BODY IPARKTEST.PKG_FAAEI01 AS
 
   C_GROUP_GUEST_TYPE  CONSTANT  VARCHAR2(3) := '310'; -- 단체우대구분코드
 
