@@ -1,0 +1,1882 @@
+CREATE OR REPLACE PACKAGE BODY IPARKUSER.PKG_DAAAI19
+AS
+
+-- 트레이스 관리번호 생성
+PROCEDURE PR_01
+                 (
+                         V_TRACE_MGNO OUT VARCHAR2
+                 )
+AS
+BEGIN
+        SELECT FN_GET_WNDW_MGNO_HEX
+        INTO   V_TRACE_MGNO
+        FROM   DUAL;
+
+END PR_01;
+
+-- 트레이스 관리번호별 내역(리스트)
+PROCEDURE PR_02
+                 (
+                         V_TRACE_MGNO IN VARCHAR2 ,
+                         V_RS01 OUT RS
+                 ) AS
+        BEGIN
+                OPEN V_RS01 FOR
+                  SELECT DISTINCT T1.TRACE_MGNO -- 관리번호
+                       , T2.RSV_NO
+                       , T3.MNG_NO
+                       , T3.CHECKIN_TYPE
+                       , T1.TRACE_SEQ -- 관리순번
+                       , T1.TRACE_DATE -- 시행일시
+                       , T1.TRACE_TEXT -- 설명
+                       , T1.TRACE_DEPT_CD -- 부서코드
+                       ,
+                       (
+                           SELECT S1.DETAIL_NAME
+                             FROM ZXA010MS S1
+                            WHERE S1.BIZ_CODE    = '20'
+                              AND S1.HEAD        = 'ZA006'
+                              AND S1.DETAIL      = T1.TRACE_DEPT_CD
+                        ) AS "TRACE_DEPT_CD_NM"
+                       , T1.RESOLVED_BY -- 처리자
+                       , T1.RESOLVED_ON -- 처리일시
+                       , T1.RESOLVED_YN -- 처리여부
+                       , T1.I_EMP_NO -- 입력자
+                       , T1.I_DATE -- 입력일시
+                       , T1.I_IP -- 입력IP
+                       , T1.U_EMP_NO -- 수정자
+                       , T1.U_DATE -- 수정일시
+                       , T1.U_IP -- 수정IP
+                       , T1.DEL_YN -- 삭제유무
+                   FROM DAA015MS T1
+                   LEFT JOIN CAA010MS T2
+                     ON T1.TRACE_MGNO = T2.TRACE_MGNO
+                   LEFT JOIN DAA010MS T3
+                     ON T1.TRACE_MGNO = T3.TRACE_MGNO
+                    AND T2.TRACE_MGNO = T3.TRACE_MGNO
+                  WHERE T1.TRACE_MGNO = V_TRACE_MGNO
+                    AND T1.DEL_YN = 'N'
+                  ORDER BY T1.TRACE_SEQ;
+
+        END PR_02;
+
+-- 트레이스 조건별 조회 리스트
+PROCEDURE PR_03
+                 (
+                         V_BIZ_CODE   IN VARCHAR2 ,
+                         V_TRACE_FROM IN VARCHAR2 ,
+                         V_TRACE_TO   IN VARCHAR2 ,
+                         V_TRACE_DEPT_CD IN VARCHAR2 ,
+                         V_RESOLVED_YN IN VARCHAR2 ,
+                         V_RS01 OUT RS
+                 ) AS
+
+				P_BIZ_CODE CAA010MS.BIZ_CODE%TYPE;
+
+        BEGIN
+
+          			P_BIZ_CODE := V_BIZ_CODE;
+
+                OPEN V_RS01 FOR
+
+
+                SELECT   A.TRACE_MGNO -- 관리번호
+                       , A.TRACE_SEQ -- 관리순번
+                       , A.TRACE_DATE -- 시행일시
+                       , A.TRACE_TEXT -- 설명
+                       , A.TRACE_DEPT_CD -- 부서코드
+                       , FN_GET_CODE_NAME(P_BIZ_CODE, 'ZA006', A.TRACE_DEPT_CD) AS "TRACE_DEPT_CD_NAME"
+                       , FN_GET_EMP_NAME(A.RESOLVED_BY) AS "RESOLVED_BY" -- 처리자
+                       , A.RESOLVED_ON -- 처리일시
+                       , A.RESOLVED_YN -- 처리여부
+                       , A.I_EMP_NO -- 입력자
+                       , A.I_DATE -- 입력일시
+                       , A.I_IP -- 입력IP
+                       , A.U_EMP_NO -- 수정자
+                       , A.U_DATE -- 수정일시
+                       , A.U_IP -- 수정IP
+                       , C.RSV_NO AS RSV_NO
+                       , PKG_UDF.RSV_NO_OUT(C.RSV_NO)                         AS RSV_NO_OUT
+                       , NVL(C.MEMBER_NO, D.MEMBER_NO) AS MEMBER_NO
+                       , NVL(C.MEMBER_NAME, D.MEMBER_NAME) AS MEMBER_NAME
+                       , NVL(C.GUEST_NAME, D.GUEST_NAME) AS GUEST_NAME
+                       , NVL(C.ACCEPT_NAME, '') AS ACCEPT_NAME
+                       , NVL(C.CHECKIN_DATE_MASK, PKG_UDF.SHORT_DATE(D.CHECKIN_DATE)) AS CHECKIN_DATE_MASK
+                       , NVL(C.CHECKIN_DATE_DY, TO_CHAR(TO_DATE(D.CHECKIN_DATE, 'YYYYMMDD'), 'DY')) AS CHECKIN_DATE_DY
+                       , NVL(C.NIGHTS, TO_DATE(D.CHECKOUT_DATE, 'YYYYMMDD') - TO_DATE(D.CHECKIN_DATE, 'YYYYMMDD') ) AS NIGHTS
+                       , NVL(C.CHECKOUT_DATE_MASK, PKG_UDF.SHORT_DATE(D.CHECKOUT_DATE)) AS CHECKOUT_DATE_MASK
+                       , NVL(C.ROOM_CNT, '1') AS ROOM_CNT
+                       , NVL(C.ROOM_NO, NVL(C.ASSIGN_ROOM_NO, D.ROOM_NO)) ROOM_NO
+                       --, G2.ROOM_NO
+                       , DECODE(D.CHECKIN_TYPE, NULL, '예약', '워크인') AS CHECKIN_TYPE
+                       , D.MNG_NO
+                       , D.MNG_SEQ
+                  FROM DAA015MS A
+                  INNER JOIN (
+                              SELECT T1.TRACE_MGNO, T2.RSV_NO, T3.MNG_NO
+                                FROM DAA015MS T1
+                                LEFT JOIN CAA010MS T2 ON (T1.TRACE_MGNO = T2.TRACE_MGNO)
+                                LEFT JOIN DAA010MS T3 ON (T1.TRACE_MGNO = T3.TRACE_MGNO)
+                               GROUP BY T1.TRACE_MGNO, T2.RSV_NO, T3.MNG_NO
+                              ) B ON (A.TRACE_MGNO = B.TRACE_MGNO)
+                    LEFT JOIN (
+                                SELECT T1.RSV_NO                                             AS "RSV_NO"
+                                      ,T1.TRACE_MGNO
+                                      ,PKG_UDF.RSV_NO_OUT(T1.RSV_NO)                         AS "RSV_NO_OUT"
+                                      ,T1.MEMBER_NO                                          AS "MEMBER_NO"
+                                      ,T5.MEMBER_NAME_KOR                                    AS "MEMBER_NAME"
+                                      ,T1.GUEST_NAME                                         AS "GUEST_NAME"
+                                      ,T1.ACCEPT_NAME                                        AS "ACCEPT_NAME"
+                                      ,PKG_UDF.SHORT_DATE(T1.CHECKIN_DATE)                   AS "CHECKIN_DATE_MASK"
+                                      ,TO_CHAR(TO_DATE(T1.CHECKIN_DATE, 'YYYYMMDD'), 'DY')   AS "CHECKIN_DATE_DY"
+                                      ,T1.NIGHTS                                             AS "NIGHTS"
+                                      ,PKG_UDF.SHORT_DATE(T1.CHECKOUT_DATE)                  AS "CHECKOUT_DATE_MASK"
+                                      ,T1.ROOM_CNT                                           AS "ROOM_CNT"
+                                      ,PKG_RSV.FN_002(T1.RSV_NO)                             AS "ROOM_NO"
+                                      ,(
+                                      SELECT LISTAGG(A1.ROOM_NO, ', ') WITHIN GROUP(ORDER BY A1.ROOM_NO)
+                                        FROM (
+                                              SELECT DISTINCT S1.BIZ_CODE
+                                                   , S1.FACILITY_CODE
+                                                   , S1.ROOM_NO
+                                                FROM DAA100MS S1
+                                               INNER JOIN
+                                                  DZA020MS S2
+                                                  ON S1.BIZ_CODE 			= S2.BIZ_CODE
+                                                 AND S1.FACILITY_CODE = S2.FACILITY_CODE
+                                                 AND S1.FACI_PART 		= S2.FACI_PART
+                                                 AND S1.ROOM_NO   		= S2.ROOM_NO
+                                               WHERE S1.BIZ_CODE  		= T1.BIZ_CODE
+                                                 AND S1.FACILITY_CODE = NVL(T1.FACILITY_CODE, S1.FACILITY_CODE)
+                                                 AND S1.RSV_NO    		IS NOT NULL
+                                                 AND S1.RSV_NO				= T1.RSV_NO
+                                              ) A1
+                                       ) AS ASSIGN_ROOM_NO
+                                      ,T1.BIZ_CODE
+                                  FROM CAA010MS T1
+                                 INNER JOIN BBA011MS T3
+                                    ON T3.BIZ_CODE    = T1.BIZ_CODE
+                                   AND T3.MEMBER_NO   = T1.MEMBER_NO
+                                 INNER JOIN BBA010MS T4
+                                    ON T4.MEMBER_SEQ  = T3.MEMBER_SEQ
+                                 INNER JOIN BBA020MS T5
+                                    ON T5.CUST_NO     = T4.CUST_NO
+                                 INNER JOIN DZA023MS T6
+                                    ON T6.BIZ_CODE      = T1.BIZ_CODE
+                                   AND T6.FACILITY_CODE = T1.FACILITY_CODE
+                                   AND T6.ROOM_TYPE     = T1.ROOM_TYPE
+                                 WHERE T1.BIZ_CODE      = V_BIZ_CODE
+                                   AND T1.TRACE_MGNO IS NOT NULL ) C ON (B.RSV_NO = C.RSV_NO)
+  				 LEFT JOIN
+           (
+             SELECT T1.*, T5.MEMBER_NAME_KOR AS MEMBER_NAME
+               FROM DAA010MS T1
+             INNER JOIN BBA011MS T3
+                ON T3.BIZ_CODE    = T1.BIZ_CODE
+               AND T3.MEMBER_NO   = T1.MEMBER_NO
+             INNER JOIN BBA010MS T4
+                ON T4.MEMBER_SEQ  = T3.MEMBER_SEQ
+             INNER JOIN BBA020MS T5
+                ON T5.CUST_NO     = T4.CUST_NO
+             INNER JOIN DZA023MS T6
+                ON T6.BIZ_CODE      = T1.BIZ_CODE
+               AND T6.FACILITY_CODE = T1.FACILITY_CODE
+               AND T6.ROOM_TYPE     = T1.ROOM_TYPE
+             WHERE T1.BIZ_CODE      = V_BIZ_CODE
+               AND T1.TRACE_MGNO IS NOT NULL
+             )
+            D ON (B.MNG_NO = D.MNG_NO)
+               WHERE A.DEL_YN = 'N'
+                 AND TO_CHAR(A.TRACE_DATE, 'YYYYMMDD') BETWEEN V_TRACE_FROM AND V_TRACE_TO
+                 AND (A.TRACE_DEPT_CD     LIKE V_TRACE_DEPT_CD || '%')
+                 AND (A.RESOLVED_YN       LIKE V_RESOLVED_YN   || '%')
+             ORDER BY A.TRACE_DATE;
+
+
+--								SELECT     G1.TRACE_MGNO -- 관리번호
+--                         , G1.TRACE_SEQ -- 관리순번
+--                         , G1.TRACE_DATE -- 시행일시
+--                         , G1.TRACE_TEXT -- 설명
+--                         , G1.TRACE_DEPT_CD -- 부서코드
+--                         ,
+--                         (
+--                             SELECT S1.DETAIL_NAME
+--                               FROM ZXA010MS S1
+--                              WHERE S1.BIZ_CODE    = NVL(G2.BIZ_CODE, G3.BIZ_CODE)
+--                                AND S1.HEAD        = 'ZA006'
+--                                AND S1.DETAIL      = G1.TRACE_DEPT_CD
+--                          )                                                     AS "TRACE_DEPT_CD_NAME"
+--                         , G1.RESOLVED_BY -- 처리자
+--                         , G1.RESOLVED_ON -- 처리일시
+--                         , G1.RESOLVED_YN -- 처리여부
+--                         , G1.I_EMP_NO -- 입력자
+--                         , G1.I_DATE -- 입력일시
+--                         , G1.I_IP -- 입력IP
+--                         , G1.U_EMP_NO -- 수정자
+--                         , G1.U_DATE -- 수정일시
+--                         , G1.U_IP -- 수정IP
+--                         , G2.RSV_NO AS RSV_NO
+--                         , NVL(G2.RSV_NO_OUT, '') AS RSV_NO_OUT
+--                         , NVL(G2.MEMBER_NO, G3.MEMBER_NO) AS MEMBER_NO
+--                         , NVL(G2.MEMBER_NAME, '') AS MEMBER_NAME
+--                         , NVL(G2.GUEST_NAME, G3.GUEST_NAME) AS GUEST_NAME
+--                         , NVL(G2.ACCEPT_NAME, '') AS ACCEPT_NAME
+--                         , NVL(G2.CHECKIN_DATE_MASK, PKG_UDF.SHORT_DATE(G3.CHECKIN_DATE)) AS CHECKIN_DATE_MASK
+--                         , NVL(G2.CHECKIN_DATE_DY, TO_CHAR(TO_DATE(G3.CHECKIN_DATE, 'YYYYMMDD'), 'DY')) AS CHECKIN_DATE_DY
+--                         , NVL(G2.NIGHTS, TO_DATE(G3.CHECKOUT_DATE, 'YYYYMMDD') - TO_DATE(G3.CHECKIN_DATE, 'YYYYMMDD') ) AS NIGHTS
+--                         , NVL(G2.CHECKOUT_DATE_MASK, PKG_UDF.SHORT_DATE(G3.CHECKOUT_DATE)) AS CHECKOUT_DATE_MASK
+--                         , NVL(G2.ROOM_CNT, '1') AS ROOM_CNT
+--                         , NVL(G2.ROOM_NO, NVL(G2.ASSIGN_ROOM_NO, G3.ROOM_NO)) ROOM_NO
+--                         --, G2.ROOM_NO
+--                         , DECODE(G3.CHECKIN_TYPE, NULL, '예약', '워크인') AS CHECKIN_TYPE
+--                         , G3.MNG_NO
+--                         , G3.MNG_SEQ
+--                FROM     DAA015MS G1
+--                         LEFT JOIN (
+--                                    SELECT T1.RSV_NO                                             AS "RSV_NO"
+--                                          ,T1.TRACE_MGNO
+--                                          ,PKG_UDF.RSV_NO_OUT(T1.RSV_NO)                         AS "RSV_NO_OUT"
+--                                          ,T1.MEMBER_NO                                          AS "MEMBER_NO"
+--                                          ,T5.MEMBER_NAME_KOR                                    AS "MEMBER_NAME"
+--                                          ,T1.GUEST_NAME                                         AS "GUEST_NAME"
+--                                          ,T1.ACCEPT_NAME                                        AS "ACCEPT_NAME"
+--                                          ,PKG_UDF.SHORT_DATE(T1.CHECKIN_DATE)                   AS "CHECKIN_DATE_MASK"
+--                                          ,TO_CHAR(TO_DATE(T1.CHECKIN_DATE, 'YYYYMMDD'), 'DY')   AS "CHECKIN_DATE_DY"
+--                                          ,T1.NIGHTS                                             AS "NIGHTS"
+--                                          ,PKG_UDF.SHORT_DATE(T1.CHECKOUT_DATE)                  AS "CHECKOUT_DATE_MASK"
+--                                          ,T1.ROOM_CNT                                           AS "ROOM_CNT"
+--                                          ,PKG_RSV.FN_002(T1.RSV_NO)                             AS "ROOM_NO"
+--                                          ,(
+--                                          SELECT LISTAGG(A1.ROOM_NO, ', ') WITHIN GROUP(ORDER BY A1.ROOM_NO)
+--                                            FROM (
+--                                                  SELECT DISTINCT S1.BIZ_CODE
+--                                                       , S1.FACILITY_CODE
+--                                                       , S1.ROOM_NO
+--                                                    FROM DAA100MS S1
+--                                                   INNER JOIN
+--                                                      DZA020MS S2
+--                                                      ON S1.BIZ_CODE 			= S2.BIZ_CODE
+--                                                     AND S1.FACILITY_CODE = S2.FACILITY_CODE
+--                                                     AND S1.FACI_PART 		= S2.FACI_PART
+--                                                     AND S1.ROOM_NO   		= S2.ROOM_NO
+--                                                   WHERE S1.BIZ_CODE  		= T1.BIZ_CODE
+--                                                     AND S1.FACILITY_CODE = NVL(T1.FACILITY_CODE, S1.FACILITY_CODE)
+--                                                     AND S1.RSV_NO    		IS NOT NULL
+--                                                     AND S1.RSV_NO				= T1.RSV_NO
+--                                                  ) A1
+--                                           ) AS ASSIGN_ROOM_NO
+--                                          ,T1.BIZ_CODE
+--                                      FROM CAA010MS T1
+--                                     INNER JOIN BBA011MS T3
+--                                        ON T3.BIZ_CODE    = T1.BIZ_CODE
+--                                       AND T3.MEMBER_NO   = T1.MEMBER_NO
+--                                     INNER JOIN BBA010MS T4
+--                                        ON T4.MEMBER_SEQ  = T3.MEMBER_SEQ
+--                                     INNER JOIN BBA020MS T5
+--                                        ON T5.CUST_NO     = T4.CUST_NO
+--                                     INNER JOIN DZA023MS T6
+--                                        ON T6.BIZ_CODE      = T1.BIZ_CODE
+--                                       AND T6.FACILITY_CODE = T1.FACILITY_CODE
+--                                       AND T6.ROOM_TYPE     = T1.ROOM_TYPE
+--                                     WHERE T1.BIZ_CODE      = V_BIZ_CODE
+--                                       AND T1.TRACE_MGNO IS NOT NULL
+--                                ) G2
+--                   ON G1.TRACE_MGNO = G2.TRACE_MGNO
+--                 LEFT JOIN DAA010MS G3
+--                   ON G1.TRACE_MGNO = G3.TRACE_MGNO
+--                  AND G3.CHECKIN_TYPE IN ('3')
+--                WHERE G2.BIZ_CODE = V_BIZ_CODE
+--                  AND TO_CHAR(G1.TRACE_DATE, 'YYYYMMDD') BETWEEN V_TRACE_FROM AND V_TRACE_TO
+--                  AND G1.DEL_YN = 'N'
+--                  AND (G1.TRACE_DEPT_CD     LIKE V_TRACE_DEPT_CD || '%')
+--                  AND (G1.RESOLVED_YN       LIKE V_RESOLVED_YN   || '%')
+--             ORDER BY G1.TRACE_DATE;
+
+        END PR_03;
+
+-- 트레이스 생성 위한 예약 리스트 조회
+PROCEDURE PR_04
+         (
+                 V_RSV_NO IN VARCHAR2 ,
+                 V_TRACE_MGNO  OUT VARCHAR2
+         ) AS
+		BEGIN
+    		IF V_RSV_NO IS NULL THEN
+        		RAISE_APPLICATION_ERROR(-20010, '예약번호가 없습니다. 전산담당자에게 문의 하시기 바랍니다.');
+        END IF;
+
+        SELECT TRACE_MGNO
+        INTO   V_TRACE_MGNO
+        FROM   CAA010MS
+        WHERE  RSV_NO = V_RSV_NO;
+    END PR_04;
+
+
+
+
+    PROCEDURE PR_05(
+                       V_FACILITY_CODE   IN VARCHAR2
+                      ,V_ROOM_TYPE       IN VARCHAR2
+                      ,V_MEMBER_CODE     IN VARCHAR2
+                      ,V_USER_CODE       IN VARCHAR2
+                      ,V_RSV_WAY         IN VARCHAR2
+                      ,V_MEMBER_NO       IN VARCHAR2
+                      ,V_GUEST_NAME      IN VARCHAR2
+                      ,V_RSV_NO          IN VARCHAR2
+                      ,V_DATE_TO         IN VARCHAR2
+                      ,V_DATE_FROM       IN VARCHAR2
+                      ,V_BIZ_CODE        IN VARCHAR2
+                      ,V_STATUS_CODE     IN VARCHAR2
+                      ,V_GUEST_TYPE      IN VARCHAR2
+                      ,V_INCLUDE_CANCEL  IN VARCHAR2
+                      ,V_ROOM_NO				 IN VARCHAR2
+                      ,V_RS             OUT RS
+                  ) AS
+		BEGIN
+      OPEN V_RS FOR
+        SELECT T1.RSV_NO                                             AS "RSV_NO"
+              ,PKG_UDF.RSV_NO_OUT(T1.RSV_NO)                         AS "RSV_NO_OUT"
+              ,(
+                 SELECT MAX(S3.PKG_NAME) AS "PKG_NAME"
+                   FROM CIA010MS S1
+                  INNER JOIN CIA011MS S2
+                     ON S2.FACILITY_RSV_NO   = S1.FACILITY_RSV_NO
+                  INNER JOIN JGA010MS S3
+                     ON S3.BIZ_CODE          = S2.BIZ_CODE
+                    AND S3.PKG_NO            = S2.PKG_NO
+                  WHERE S1.BIZ_CODE          = T1.BIZ_CODE
+                    AND S1.RSV_NO            = T1.RSV_NO
+               )                                                     AS "PKG_NAME"
+              ,CASE
+                 WHEN T1.PKG_YN = 'Y' THEN
+                   (
+                     SELECT MIN(
+                              CASE
+                                WHEN EXISTS (
+                                              SELECT NULL
+                                                FROM CIA012MS S3
+                                               WHERE S3.FACILITY_RSV_NO   = S1.FACILITY_RSV_NO
+                                                 AND S3.RSV_KEY_SEQ       = S1.RSV_KEY_SEQ
+                                            )
+                                THEN
+                                  '예약완료'
+                                ELSE
+                                  '미예약'
+                              END
+                            )
+                       FROM CIA011MS S1
+                           ,JBA011MS S2
+                           ,CIA010MS S5
+                      WHERE S1.FACILITY_RSV_NO     = S5.FACILITY_RSV_NO
+                        AND S2.BIZ_CODE            = S1.BIZ_CODE
+                        AND S2.FACILITY_CODE       = S1.FACILITY_CODE
+                        AND S2.MENU_CODE           = S1.MENU_CODE
+                        AND S2.DATE_FROM           = S1.DATE_FROM
+                        AND S2.TABLE_RSV_YN        = 'Y'
+                        AND S5.RSV_NO              = T1.RSV_NO
+                   )
+                 ELSE
+                   CASE
+                     WHEN EXISTS(
+                            SELECT NULL
+                              FROM CIA010MS S4
+                             WHERE S4.RSV_NO = T1.RSV_NO
+                          )
+                     THEN
+                       '예약'
+                     ELSE
+                       ''
+                   END
+               END                                                   AS "FACILITY_RSV_YN"
+              ,T1.MEMBER_NO                                          AS "MEMBER_NO"
+              ,T5.MEMBER_NAME_KOR                                    AS "MEMBER_NAME"
+              ,T1.GUEST_NAME                                         AS "GUEST_NAME"
+              ,T1.ACCEPT_NAME                                        AS "ACCEPT_NAME"
+              ,T1.ACOMPANY_MGNO                                      AS "ACOMPANY_MGNO"
+              ,(
+                 SELECT LISTAGG(S1.ACOMPANY_NAME, ', ') WITHIN GROUP(ORDER BY S1.ACOMPANY_SEQ)
+                   FROM DAA014MS S1
+                  WHERE S1.ACOMPANY_MGNO     = T1.ACOMPANY_MGNO
+               )                                                     AS "ACOMPANY_NAMES"
+              --> 트레이스 관리번호 추가 2018-02-22
+              ,T1.TRACE_MGNO																				 AS "TRACE_MGNO"
+              ,(
+                 SELECT S1.DETAIL_NAME
+                   FROM ZXA010MS S1
+                  WHERE S1.BIZ_CODE    = T1.BIZ_CODE
+                    AND S1.HEAD        = 'C0019'
+                    AND S1.DETAIL      = T1.USER_CODE
+               )                                                     AS "USER_CODE_NAME"
+              ,T1.GUEST_TEL_NO                                       AS "GUEST_TEL_NO"
+              ,T1.MOBILE_TEL                                         AS "MOBILE_TEL"
+              ,T6.ROOM_TYPE_NAME                                     AS "ROOM_TYPE_NAME"
+              ,(
+                 SELECT S4.COMMODITY_CODE
+                   FROM BAA010MS S1
+                  INNER JOIN AAA010MS S2
+                     ON S2.APPLICATION_NO = S1.APPLICATION_NO
+                  INNER JOIN AXA020MS S3
+                     ON S3.SALE_PROD_NO   = S2.SALE_PROD_NO
+                  INNER JOIN AXA010MS S4
+                     ON S4.PRODUCT_NO     = S3.PRODUCT_NO
+                  WHERE S1.MEMBER_SEQ     = T3.MEMBER_SEQ
+                    AND S1.CONT_YN        = 'N'
+               )                                                     AS "COMMODITY_NAME"
+              ,(
+                 SELECT S1.DETAIL_NAME
+                   FROM ZXA010MS S1
+                  WHERE S1.BIZ_CODE    = T1.BIZ_CODE
+                    AND S1.HEAD        = 'B0001'
+                    AND S1.DETAIL      = T4.MEMBER_GROUP_CODE
+               )                                                     AS "MEMBER_GROUP_NAME"
+              ,T1.GUEST_TYPE                                         AS "GUEST_TYPE"
+              ,(
+                 SELECT S1.DETAIL_NAME
+                   FROM ZXA010MS S1
+                  WHERE S1.BIZ_CODE    = T1.BIZ_CODE
+                    AND S1.HEAD        = 'Z0006'
+                    AND S1.DETAIL      = T1.GUEST_TYPE
+               )                                                     AS "GUEST_TYPE_NAME"
+              ,PKG_UDF.SHORT_DATE(T1.CHECKIN_DATE)                   AS "CHECKIN_DATE_MASK"
+              ,TO_CHAR(TO_DATE(T1.CHECKIN_DATE, 'YYYYMMDD'), 'DY')   AS "CHECKIN_DATE_DY"
+              ,T1.NIGHTS                                             AS "NIGHTS"
+              ,PKG_UDF.SHORT_DATE(T1.CHECKOUT_DATE)                  AS "CHECKOUT_DATE_MASK"
+              ,T1.ROOM_CNT                                           AS "ROOM_CNT"
+              ,PKG_RSV.FN_004(T1.RSV_NO)
+               + NVL(T7.ONLY_FACILITY_AMT, 0)                        AS "TOTAL_APP_AMT"
+              ,PKG_RSV.FN_004(T1.RSV_NO)                             AS "ROOM_APP_AMT"
+              ,NVL(T7.ONLY_FACILITY_AMT, 0)                          AS "FACILITY_APP_AMT"
+              ,PKG_RSV.FN_002(T1.RSV_NO)                             AS "ROOM_NO"
+              ,(
+                 SELECT S1.DETAIL_NAME
+                   FROM ZXA010MS S1
+                  WHERE S1.BIZ_CODE    = T1.BIZ_CODE
+                    AND S1.HEAD        = 'C0017'
+                    AND S1.DETAIL      = T1.RSV_WAY
+               )                                                     AS "RSV_WAY_NAME"
+              ,CASE
+                 WHEN T1.CHECKIN_YN = 'Y' THEN
+                   '투숙'
+                 ELSE
+                   T8.DETAIL_NAME
+               END                                                   AS "STATUS_CODE_NAME"
+              ,T1.RMRK                                               AS "RMRK"
+              ,(SELECT S1.EMP_NAME
+                  FROM ZAA010MS S1
+                 WHERE S1.EMP_NO =  T1.U_EMP_NO)
+               || ' ' || TO_CHAR(T1.U_DATE, 'YY/MM/DD HH24:MI')      AS "U_DATE"
+              ,T9.EVENT_NAME                                         AS "EVENT_NAME"
+              ,T9.RMRK                                               AS "EVENT_RMRK"
+              ,(SELECT S1.DETAIL_NAME
+                  FROM ZXA010MS S1
+                 WHERE S1.BIZ_CODE = T1.BIZ_CODE
+                   AND S1.HEAD = 'F0010'
+                   AND S1.DETAIL = T9.LEVEL_APPROVE)                 AS "LEVEL_APPROVE_NAME"
+          FROM CAA010MS T1
+         INNER JOIN BBA011MS T3
+            ON T3.BIZ_CODE    = T1.BIZ_CODE
+           AND T3.MEMBER_NO   = T1.MEMBER_NO
+         INNER JOIN BBA010MS T4
+            ON T4.MEMBER_SEQ  = T3.MEMBER_SEQ
+         INNER JOIN BBA020MS T5
+            ON T5.CUST_NO     = T4.CUST_NO
+         INNER JOIN DZA023MS T6
+            ON T6.BIZ_CODE      = T1.BIZ_CODE
+           AND T6.FACILITY_CODE = T1.FACILITY_CODE
+           AND T6.ROOM_TYPE     = T1.ROOM_TYPE
+          LEFT JOIN
+               (
+                 SELECT S1.BIZ_CODE
+                       ,S1.RSV_NO
+                       ,SUM(S2.SALE_AMT) AS "FACILITY_APP_AMT"
+                       ,SUM(
+                          CASE
+                            WHEN S2.FACILITY_CODE = '1001' THEN
+                              S2.SALE_AMT
+                            ELSE
+                              0
+                          END
+                        )               AS "FACILITY_ROOM_AMT"
+                       ,SUM(
+                          CASE
+                            WHEN S2.FACILITY_CODE <> '1001' THEN
+                              S2.SALE_AMT
+                            ELSE
+                              0
+                          END
+                        )               AS "ONLY_FACILITY_AMT"
+                   FROM CIA010MS S1
+                  INNER JOIN CIA011MS S2
+                     ON S2.FACILITY_RSV_NO   = S1.FACILITY_RSV_NO
+                  GROUP BY
+                        S1.BIZ_CODE
+                       ,S1.RSV_NO
+               ) T7
+            ON T7.BIZ_CODE    = T1.BIZ_CODE
+           AND T7.RSV_NO      = T1.RSV_NO
+         INNER JOIN ZXA010MS T8
+            ON T8.BIZ_CODE    = T1.BIZ_CODE
+           AND T8.HEAD        = 'C0001'
+           AND T8.DETAIL      = T1.STATUS_CODE
+          LEFT JOIN FAA010MS T9
+            ON T9.BIZ_CODE    = T1.BIZ_CODE
+           AND T9.EVENT_NO    = T1.MEMBER_NO
+         WHERE T1.BIZ_CODE                = V_BIZ_CODE
+           AND T1.FACILITY_CODE           = NVL(V_FACILITY_CODE , T1.FACILITY_CODE     )
+           AND T1.CHECKIN_DATE           <= V_DATE_TO
+           AND T1.CHECKOUT_DATE           > V_DATE_FROM
+           AND T1.ROOM_TYPE               = NVL(V_ROOM_TYPE     , T1.ROOM_TYPE         )
+           AND T1.USER_CODE               = NVL(V_USER_CODE     , T1.USER_CODE         )
+           AND T4.MEMBER_GROUP_CODE       = NVL(V_MEMBER_CODE   , T4.MEMBER_GROUP_CODE )
+           AND T1.GUEST_TYPE              = NVL(V_GUEST_TYPE    , T1.GUEST_TYPE        )
+           AND T1.RSV_WAY                 = NVL(V_RSV_WAY       , T1.RSV_WAY           )
+           AND T1.STATUS_CODE             = NVL(V_STATUS_CODE   , T1.STATUS_CODE       )
+           AND T1.RSV_NO               LIKE '%' || V_RSV_NO
+           AND NVL(PKG_RSV.FN_002(T1.RSV_NO),T1.RSV_NO) LIKE V_ROOM_NO ||'%'
+           AND (
+                    UPPER(T1.GUEST_NAME)      LIKE UPPER(V_GUEST_NAME) || '%'
+                 OR UPPER(T1.ACCEPT_NAME)     LIKE UPPER(V_GUEST_NAME) || '%'
+                 OR T1.MEMBER_NO              LIKE V_GUEST_NAME        || '%'
+                 OR UPPER(T5.MEMBER_NAME_KOR) LIKE UPPER(V_GUEST_NAME) || '%'
+                 OR EXISTS (
+                             SELECT NULL
+                               FROM DAA014MS S1
+                              WHERE S1.ACOMPANY_MGNO     = T1.ACOMPANY_MGNO
+                                AND S1.ACOMPANY_UNAME LIKE UPPER(V_GUEST_NAME) || '%'
+                           )
+               )
+
+           AND T8.ITEM1                   = 'Y'
+           AND T8.ITEM3                   = CASE
+                                              WHEN V_INCLUDE_CANCEL = 'Y' THEN
+                                                T8.ITEM3
+                                              ELSE
+                                                'N'
+                                            END
+         ORDER BY
+               T1.FACILITY_CODE
+              ,T1.CHECKIN_DATE
+              ,T1.ROOM_TYPE
+    ;
+
+    END PR_05;
+
+
+  PROCEDURE PR_06
+  (
+      V_MNG_NO 				 IN VARCHAR2
+    , V_RS             OUT RS
+  )
+    AS
+  	BEGIN
+      OPEN V_RS FOR
+        SELECT T2.RSV_NO RSV_NO
+             , T1.MNG_NO MNG_NO
+             , T1.MNG_SEQ MNG_SEQ
+             , DECODE(T1.CHECKIN_TYPE, 3, 'Y', T3.CHECKIN_YN) CHECKIN_YN
+             , T1.CHECKIN_TYPE
+             , (
+               SELECT S1.DETAIL_NAME
+                 FROM ZXA010MS S1
+                WHERE S1.BIZ_CODE    = T1.BIZ_CODE
+                  AND S1.HEAD        = 'DA001'
+                  AND S1.DETAIL      = T1.CHECKIN_TYPE
+             ) CHECKIN_TYPE_NAME
+             , T1.GUEST_TYPE
+             , (
+               SELECT S1.DETAIL_NAME
+                 FROM ZXA010MS S1
+                WHERE S1.BIZ_CODE    = T1.BIZ_CODE
+                  AND S1.HEAD        = 'Z0006'
+                  AND S1.DETAIL      = T1.GUEST_TYPE
+             ) GUEST_TYPE_NAME
+             , T1.GUEST_NAME
+             , T1.CHECKIN_DATE
+             , T1.CHECKOUT_DATE
+             , T1.GUEST_TEL_NO
+             , T1.TRACE_MGNO
+             , T1.ROOM_NO
+          FROM DAA010MS T1
+          LEFT JOIN DZA900MS T2
+            ON T1.MNG_NO  = T2.MNG_NO
+          LEFT JOIN CAA010MS T3
+            ON T2.RSV_NO  = T3.RSV_NO
+         WHERE T1.MNG_NO  = V_MNG_NO
+           AND T1.MNG_SEQ = 1;
+
+	END PR_06;
+
+	PROCEDURE PR_07
+				(
+      		   V_BIZ_CODE        IN VARCHAR2
+          	,V_FACILITY_CODE   IN VARCHAR2
+            ,V_DATE_FROM       IN VARCHAR2
+            ,V_DATE_TO         IN VARCHAR2
+            ,V_ROOM_TYPE       IN VARCHAR2
+            ,V_USER_CODE       IN VARCHAR2
+            ,V_GUEST_TYPE      IN VARCHAR2
+            ,V_RSV_WAY         IN VARCHAR2
+            ,V_STATUS_CODE     IN VARCHAR2
+            ,V_CHECKIN_TYPE    IN VARCHAR2
+            ,V_RSV_NO          IN VARCHAR2
+            ,V_ROOM_NO				 IN VARCHAR2
+            ,V_GUEST_NAME      IN VARCHAR2
+            ,V_RS             OUT RS
+        )
+        AS
+
+        BEGIN
+
+        OPEN V_RS FOR
+
+        SELECT RSV_NO,RSV_NO_OUT,MNG_NO,MNG_SEQ,BIZ_CODE,FACILITY_CODE,MEMBER_NO,MEMBER_NAME_KOR,NIGHTS,ROOM_TYPE,USER_CODE,RSV_WAY,GUEST_TYPE,GUEST_NAME,ACCEPT_NAME,GUEST_TEL_NO,MOBILE_TEL,ROOM_TYPE_NAME,MEMBER_GROUP_CODE,ROOM_CNT,RMRK,STATUS_CODE, STATUS_CODE_NAME, CHECKIN_TYPE,CHECKIN_TYPE_NAME,TRACE_MGNO,U_EMP_NO,CHECKIN_DATE_CA,CHECKOUT_DATE_CA,CHECKIN_DATE_DA,CHECKOUT_DATE_DA,ORI_CHECKOUT_DATE_DA,ROOM_NO,ASSIGN_ROOM_NO_DA,ASSIGN_ROOM_NO_CA,CHECKIN_DATE_MASK,CHECKIN_DATE_DY,CHECKOUT_DATE_MASK,MEMBER_GROUP_NAME,GUEST_TYPE_NAME,ROOM_APP_AMT,RSV_WAY_NAME,U_DATE
+  			  FROM (
+        SELECT Z1.RSV_NO
+           , PKG_UDF.RSV_NO_OUT(Z1.RSV_NO) RSV_NO_OUT
+           , Z3.MNG_NO
+           , Z3.MNG_SEQ
+           , Z1.BIZ_CODE
+           , Z1.FACILITY_CODE
+           , Z1.MEMBER_NO
+           , Z1.MEMBER_NAME_KOR
+           , '' || Z1.NIGHTS NIGHTS
+           , Z1.ROOM_TYPE
+           , Z1.USER_CODE
+           , Z1.RSV_WAY
+           , Z1.GUEST_TYPE
+           , Z1.GUEST_NAME
+           , Z1.ACCEPT_NAME
+           , Z1.GUEST_TEL_NO
+           , Z1.MOBILE_TEL
+           , Z1.ROOM_TYPE_NAME
+           , Z1.MEMBER_GROUP_CODE
+           , '' || Z1.ROOM_CNT ROOM_CNT
+           , Z1.RMRK
+           , Z1.STATUS_CODE
+           , (
+               SELECT S1.DETAIL_NAME
+                 FROM ZXA010MS S1
+                WHERE S1.BIZ_CODE    = Z1.BIZ_CODE
+                  AND S1.HEAD        = 'C0001'
+                  AND S1.DETAIL      = Z1.STATUS_CODE
+            ) STATUS_CODE_NAME
+            , Z3.CHECKIN_TYPE
+            , (
+                SELECT S1.DETAIL_NAME
+                  FROM ZXA010MS S1
+                 WHERE S1.BIZ_CODE = Z1.BIZ_CODE
+                   AND S1.HEAD     = 'DA001'
+                   AND S1.DETAIL   = Z3.CHECKIN_TYPE
+              ) CHECKIN_TYPE_NAME
+           , Z1.TRACE_MGNO
+           , Z1.U_EMP_NO
+           , Z3.ROOM_NO
+           , Z1.CHECKIN_DATE CHECKIN_DATE_CA
+           , Z1.CHECKOUT_DATE CHECKOUT_DATE_CA
+           , Z3.CHECKIN_DATE CHECKIN_DATE_DA
+           , Z3.CHECKOUT_DATE CHECKOUT_DATE_DA
+           , Z3.ORI_CHECKOUT_DATE ORI_CHECKOUT_DATE_DA
+           , Z3.ASSIGN_ROOM_NO ASSIGN_ROOM_NO_DA
+           , Z1.ROOM_NO_ASGN ASSIGN_ROOM_NO_CA
+           , PKG_UDF.SHORT_DATE(Z1.CHECKIN_DATE)                   AS "CHECKIN_DATE_MASK"
+           , TO_CHAR(TO_DATE(Z1.CHECKIN_DATE, 'YYYYMMDD'), 'DY')   AS "CHECKIN_DATE_DY"
+           , PKG_UDF.SHORT_DATE(Z1.CHECKOUT_DATE)                  AS "CHECKOUT_DATE_MASK"
+          , (
+                 SELECT S1.DETAIL_NAME
+                   FROM ZXA010MS S1
+                  WHERE S1.BIZ_CODE    = Z1.BIZ_CODE
+                    AND S1.HEAD        = 'B0001'
+                    AND S1.DETAIL      = Z1.MEMBER_GROUP_CODE
+            )  AS "MEMBER_GROUP_NAME"
+          , (
+               SELECT S1.DETAIL_NAME
+                 FROM ZXA010MS S1
+                WHERE S1.BIZ_CODE    = Z1.BIZ_CODE
+                  AND S1.HEAD        = 'Z0006'
+                  AND S1.DETAIL      = Z1.GUEST_TYPE
+          ) AS "GUEST_TYPE_NAME"
+          , '' || PKG_RSV.FN_004(Z1.RSV_NO) AS "ROOM_APP_AMT"
+          , (
+                       SELECT S1.DETAIL_NAME
+                         FROM ZXA010MS S1
+                        WHERE S1.BIZ_CODE    = Z1.BIZ_CODE
+                          AND S1.HEAD        = 'C0017'
+                          AND S1.DETAIL      = Z1.RSV_WAY
+          ) AS "RSV_WAY_NAME"
+          , (SELECT S1.EMP_NAME
+               FROM ZAA010MS S1
+              WHERE S1.EMP_NO =  Z1.U_EMP_NO) || ' ' || TO_CHAR(Z1.U_DATE, 'YY/MM/DD HH24:MI')      AS "U_DATE"
+        FROM (
+              SELECT
+                     T1.BIZ_CODE
+                   , T1.FACILITY_CODE
+                   , T1.RSV_NO
+                   , T1.MEMBER_NO
+                   , T5.MEMBER_NAME_KOR
+                   , T1.CHECKIN_DATE
+                   , T1.CHECKOUT_DATE
+                   , T1.NIGHTS
+                   , T1.ROOM_TYPE
+                   , T1.USER_CODE
+                   , T1.RSV_WAY
+                   , T1.GUEST_TYPE
+                   , T1.GUEST_NAME
+                   , T1.ACCEPT_NAME
+                   , T1.GUEST_TEL_NO
+                   , T1.MOBILE_TEL
+                   , T6.ROOM_TYPE_NAME
+                   , T4.MEMBER_GROUP_CODE
+                   , T1.ROOM_CNT
+                   , T1.RMRK
+                   , T1.STATUS_CODE
+                   , T1.TRACE_MGNO
+                   , T1.U_EMP_NO
+                   , T1.U_DATE
+                   , MIN(T2.ROOM_NO) ROOM_NO_ASGN
+                FROM CAA010MS T1
+               INNER JOIN BBA011MS T3
+                  ON T3.BIZ_CODE    = T1.BIZ_CODE
+                 AND T3.MEMBER_NO   = T1.MEMBER_NO
+               INNER JOIN BBA010MS T4
+                  ON T4.MEMBER_SEQ  = T3.MEMBER_SEQ
+               INNER JOIN BBA020MS T5
+                  ON T5.CUST_NO     = T4.CUST_NO
+               INNER JOIN DZA023MS T6
+                  ON T6.BIZ_CODE      = T1.BIZ_CODE
+                 AND T6.FACILITY_CODE = T1.FACILITY_CODE
+                 AND T6.ROOM_TYPE     = T1.ROOM_TYPE
+                LEFT JOIN DAA100MS T2
+                  ON T1.BIZ_CODE = T2.BIZ_CODE
+                 AND T1.FACILITY_CODE = T2.FACILITY_CODE
+                 AND T1.RSV_NO = T2.RSV_NO
+                 AND T2.STATUS_CODE IN ('A', 'F')
+               WHERE T1.BIZ_CODE       = V_BIZ_CODE
+                 AND T1.FACILITY_CODE  = V_FACILITY_CODE
+                 --AND T1.STATUS_CODE NOT IN ('C')
+                 AND T1.CHECKIN_DATE  >= V_DATE_FROM
+         				 AND T1.CHECKOUT_DATE <= V_DATE_TO
+               GROUP BY
+                     T1.BIZ_CODE
+                   , T1.FACILITY_CODE
+                   , T1.RSV_NO
+                   , T1.MEMBER_NO
+                   , T5.MEMBER_NAME_KOR
+                   , T1.CHECKIN_DATE
+                   , T1.CHECKOUT_DATE
+                   , T1.NIGHTS
+                   , T1.ROOM_TYPE
+                   , T1.USER_CODE
+                   , T1.RSV_WAY
+                   , T1.GUEST_TYPE
+                   , T1.GUEST_NAME
+                   , T1.ACCEPT_NAME
+                   , T1.GUEST_TEL_NO
+                   , T1.MOBILE_TEL
+                   , T6.ROOM_TYPE_NAME
+                   , T4.MEMBER_GROUP_CODE
+                   , T1.ROOM_CNT
+                   , T1.RMRK
+                   , T1.STATUS_CODE
+                   , T1.TRACE_MGNO
+                   , T1.U_EMP_NO
+                   , T1.U_DATE
+               ) Z1
+           LEFT JOIN DZA900MS Z2
+             ON Z1.RSV_NO = Z2.RSV_NO
+           LEFT JOIN DAA010MS Z3
+             ON Z1.BIZ_CODE = Z3.BIZ_CODE
+            AND Z1.FACILITY_CODE = Z3.FACILITY_CODE
+            AND Z2.MNG_NO = Z3.MNG_NO
+            AND Z3.MNG_SEQ = 1
+      UNION ALL
+      SELECT '' RSV_NO
+           , '' RSV_NO_OUT
+           , T1.MNG_NO
+           , T1.MNG_SEQ
+           , T1.BIZ_CODE
+           , T1.FACILITY_CODE
+           , T1.MEMBER_NO
+           , '' MEMBER_NAME_KOR
+           , '' NIGHTS
+           , T1.ROOM_TYPE
+           , T1.USER_CODE
+           , T1.RSV_WAY
+           , T1.GUEST_TYPE
+           , T1.GUEST_NAME
+           , '' ACCEPT_NAME
+           , T1.GUEST_TEL_NO
+           , T1.MOBILE_TEL
+           , '' ROOM_TYPE_NAME
+           , '' MEMBER_GROUP_CODE
+           , '' ROOM_CNT
+           , T1.RMRK
+           , '' STATUS_CODE
+           , '' STATUS_CODE_NAME
+           , T1.CHECKIN_TYPE
+           ,
+           (
+           	SELECT S1.DETAIL_NAME
+              FROM ZXA010MS S1
+             WHERE S1.BIZ_CODE = T1.BIZ_CODE
+               AND S1.HEAD     = 'DA001'
+               AND S1.DETAIL   = T1.CHECKIN_TYPE
+           ) CHECKIN_TYPE_NAME
+           , T1.TRACE_MGNO
+           , T1.U_EMP_NO
+           , T1.ROOM_NO
+           , '' CHECKIN_DATE_CA
+           , '' CHECKOUT_DATE_CA
+           , T1.CHECKIN_DATE CHECKIN_DATE_DA
+           , T1.CHECKOUT_DATE CHECKOUT_DATE_DA
+           , '' ORI_CHECKOUT_DATE_DA
+           , T1.ASSIGN_ROOM_NO ASSIGN_ROOM_NO_DA
+           , '' ASSIGN_ROOM_NO_CA
+           , PKG_UDF.SHORT_DATE(T1.CHECKIN_DATE)                   AS "CHECKIN_DATE_MASK"
+           , TO_CHAR(TO_DATE(T1.CHECKIN_DATE, 'YYYYMMDD'), 'DY')   AS "CHECKIN_DATE_DY"
+           , PKG_UDF.SHORT_DATE(T1.CHECKOUT_DATE)                  AS "CHECKOUT_DATE_MASK"
+           , '' MEMBER_GROUP_NAME
+           , (
+               SELECT S1.DETAIL_NAME
+                 FROM ZXA010MS S1
+                WHERE S1.BIZ_CODE    = T1.BIZ_CODE
+                  AND S1.HEAD        = 'Z0006'
+                  AND S1.DETAIL      = T1.GUEST_TYPE
+           ) GUEST_TYPE_NAME
+           , '' ROOM_APP_AMT
+           , '' RSV_WAY_NAME
+           , (SELECT S1.EMP_NAME
+               FROM ZAA010MS S1
+              WHERE S1.EMP_NO =  T1.U_EMP_NO) || ' ' || TO_CHAR(T1.U_DATE, 'YY/MM/DD HH24:MI')      AS "U_DATE"
+        FROM DAA010MS T1
+        LEFT JOIN DZA900MS T2
+          ON T1.MNG_NO = T2.MNG_NO
+       WHERE T1.BIZ_CODE = V_BIZ_CODE
+         AND T1.FACILITY_CODE = V_FACILITY_CODE
+         AND T2.RSV_NO IS NULL
+         AND T1.CHECKIN_TYPE IN ('3')
+         AND T1.CHECKIN_DATE  >= V_DATE_FROM
+         AND T1.CHECKOUT_DATE <= V_DATE_TO
+        ) X1
+   WHERE X1.FACILITY_CODE           = NVL(V_FACILITY_CODE , X1.FACILITY_CODE     )
+     AND X1.ROOM_TYPE               = NVL(V_ROOM_TYPE     , X1.ROOM_TYPE         )
+     AND X1.USER_CODE               = NVL(V_USER_CODE     , X1.USER_CODE         )
+     AND X1.GUEST_TYPE              = NVL(V_GUEST_TYPE    , X1.GUEST_TYPE        )
+     AND (X1.RSV_WAY                = V_RSV_WAY OR V_RSV_WAY IS NULL AND 1=1)
+     AND (X1.STATUS_CODE            = V_STATUS_CODE OR V_STATUS_CODE IS NULL AND 1 = 1)
+     AND X1.CHECKIN_TYPE						= NVL(V_CHECKIN_TYPE  , X1.CHECKIN_TYPE      )
+     AND (X1.RSV_NO                  LIKE '%' || V_RSV_NO OR V_RSV_NO IS NULL AND 1 = 1)
+     AND (NVL(PKG_RSV.FN_002(X1.RSV_NO),X1.RSV_NO) LIKE V_ROOM_NO ||'%' OR V_ROOM_NO IS NULL AND 1 = 1)
+     AND (
+              UPPER(X1.GUEST_NAME)      LIKE UPPER(V_GUEST_NAME) || '%'
+           OR UPPER(X1.ACCEPT_NAME)     LIKE UPPER(V_GUEST_NAME) || '%'
+           OR X1.MEMBER_NO              LIKE V_GUEST_NAME        || '%'
+           OR UPPER(X1.MEMBER_NAME_KOR) LIKE UPPER(V_GUEST_NAME) || '%'
+         )
+   ORDER BY
+          X1.FACILITY_CODE
+        , x1.CHECKIN_DATE_MASK
+        , X1.ROOM_TYPE;
+
+	END PR_07;
+
+
+  PROCEDURE PR_08
+  (
+      V_RSV_NO 				 IN VARCHAR2
+    , V_RS             OUT RS
+  )
+    AS
+    BEGIN
+        OPEN V_RS FOR
+          SELECT T1.RSV_NO
+               , T1.CHECKIN_YN
+               , T1.GUEST_TYPE
+               , (
+                 SELECT S1.DETAIL_NAME
+                   FROM ZXA010MS S1
+                  WHERE S1.BIZ_CODE    = T1.BIZ_CODE
+                    AND S1.HEAD        = 'Z0006'
+                    AND S1.DETAIL      = T1.GUEST_TYPE
+               ) GUEST_TYPE_NAME
+               , T1.GUEST_NAME
+               , T1.CHECKIN_DATE
+               , T1.CHECKOUT_DATE
+               , T1.MOBILE_TEL
+               , T1.TRACE_MGNO
+               , T3.CHECKIN_TYPE
+               , (
+                 SELECT S1.DETAIL_NAME
+                   FROM ZXA010MS S1
+                  WHERE S1.BIZ_CODE    = NVL(T3.BIZ_CODE, T1.BIZ_CODE)
+                    AND S1.HEAD        = 'DA001'
+                    AND S1.DETAIL      = T3.CHECKIN_TYPE
+               ) CHECKIN_TYPE_NAME
+               , NVL(T3.ROOM_NO, NVL(T1.ROOM_NO, NVL(T3.ASSIGN_ROOM_NO, NULL))) AS ROOM_NO
+            FROM (
+                  SELECT T1.BIZ_CODE
+                       , T1.RSV_NO
+                       , T1.CHECKIN_YN
+                       , T1.GUEST_TYPE
+                       , T1.GUEST_NAME
+                       , T1.CHECKIN_DATE
+                       , T1.CHECKOUT_DATE
+                       , T1.MOBILE_TEL
+                       , T1.TRACE_MGNO
+                       , MIN(T2.ROOM_NO) AS ROOM_NO
+                    FROM CAA010MS T1
+                    LEFT JOIN DAA100MS T2
+                      ON T1.BIZ_CODE = T2.BIZ_CODE
+                     AND T1.FACILITY_CODE = T2.FACILITY_CODE
+                     AND T1.RSV_NO = T2.RSV_NO
+                     AND T2.STATUS_CODE IN ('A', 'F')
+                   GROUP BY T1.BIZ_CODE
+                          , T1.RSV_NO
+                          , T1.CHECKIN_YN
+                          , T1.GUEST_TYPE
+                          , T1.GUEST_NAME
+                          , T1.CHECKIN_DATE
+                          , T1.CHECKOUT_DATE
+                          , T1.MOBILE_TEL
+                          , T1.TRACE_MGNO
+                  ) T1
+                  LEFT JOIN DZA900MS T2
+                    ON T1.RSV_NO = T2.RSV_NO
+                  LEFT JOIN DAA010MS T3
+                    ON T2.MNG_NO = T3.MNG_NO
+                   AND T3.MNG_SEQ = 1
+                 WHERE T1.RSV_NO = V_RSV_NO;
+    END PR_08;
+
+
+	PROCEDURE PR_10
+         (
+                 V_TRACE_MGNO IN VARCHAR2 ,
+                 V_TRACE_DATE IN DATE ,
+                 V_TRACE_TEXT IN VARCHAR2 ,
+                 V_TRACE_DEPT_CD IN VARCHAR2,
+                 V_EMP_NO     IN VARCHAR2 ,
+                 V_IP         IN VARCHAR2 ,
+                 V_RET OUT       VARCHAR2
+         ) AS
+        BEGIN
+                IF V_TRACE_MGNO IS NULL THEN
+                        RAISE_APPLICATION_ERROR(-20010, '관리번호가 없습니다. 전산담장자에게 문의 하시기 바랍니다.');
+                ELSIF V_TRACE_DATE IS NULL THEN
+                        RAISE_APPLICATION_ERROR(-20012, '시행일을 선택하셔야 합니다.');
+                END IF;
+                INSERT
+                INTO   DAA015MS
+                       (
+                              TRACE_MGNO ,
+                              TRACE_SEQ ,
+                              TRACE_DATE ,
+                              TRACE_TEXT ,
+                              TRACE_DEPT_CD,
+                              I_EMP_NO ,
+                              I_DATE ,
+                              I_IP ,
+                              U_EMP_NO ,
+                              U_DATE ,
+                              U_IP
+                       )
+                       VALUES
+                       (
+                                V_TRACE_MGNO
+                              , ( SELECT NVL(MAX(S1.TRACE_SEQ), 0) + 1
+                                    FROM DAA015MS S1
+                                   WHERE S1.TRACE_MGNO = V_TRACE_MGNO
+                              ) -- TRACE_SEQ
+                              , V_TRACE_DATE
+                              , V_TRACE_TEXT
+                              , V_TRACE_DEPT_CD
+                              , V_EMP_NO -- I_EMP_NO
+                              , SYSDATE -- I_DATE
+                              , V_IP -- I_IP
+                              , V_EMP_NO -- U_EMP_NO
+                              , SYSDATE -- U_DATE
+                              , V_IP -- U_IP
+                       );
+
+                V_RET := 'OK';
+  EXCEPTION
+  WHEN OTHERS THEN
+          V_RET := FN_GETERROR(SQLCODE)
+          || CHR(13)
+          || CHR(10)
+          || '[PR_10] 트레이스 저장시 에러발생.';
+  END PR_10;
+
+	PROCEDURE PR_11
+         (
+                 V_TRACE_MGNO IN VARCHAR2 ,
+                 V_TRACE_SEQ  IN NUMBER ,
+                 V_TRACE_DATE IN DATE ,
+                 V_TRACE_TEXT IN VARCHAR2 ,
+                 V_TRACE_DEPT_CD IN VARCHAR2 ,
+                 V_RESOLVED_YN IN VARCHAR2 ,
+                 V_EMP_NO     IN VARCHAR2 ,
+                 V_IP         IN VARCHAR2 ,
+                 V_RET OUT       VARCHAR2
+         ) AS
+        BEGIN
+                IF V_TRACE_MGNO IS NULL THEN
+                        RAISE_APPLICATION_ERROR(-20010, '관리번호가 없습니다. 전산담당자에게 문의 하시기 바랍니다.');
+                ELSIF V_TRACE_SEQ IS NULL THEN
+                        RAISE_APPLICATION_ERROR(-20011, '관리순번이 없습니다. 전산담당자에게 문의 하시기 바랍니다.');
+                ELSIF V_TRACE_DATE IS NULL THEN
+                        RAISE_APPLICATION_ERROR(-20012, '트레이스 날짜를 입력하셔야 합니다.');
+                END IF;
+
+                IF V_RESOLVED_YN = 'Y' THEN
+                    UPDATE DAA015MS
+                    SET    TRACE_DATE    = V_TRACE_DATE ,
+                           TRACE_TEXT    = V_TRACE_TEXT ,
+                           TRACE_DEPT_CD = V_TRACE_DEPT_CD,
+                           RESOLVED_YN   = 'Y',
+                           RESOLVED_ON   = SYSDATE,
+                           RESOLVED_BY   = V_EMP_NO,
+                           U_EMP_NO      = V_EMP_NO ,
+                           U_DATE        = SYSDATE ,
+                           U_IP          = V_IP
+                    WHERE  TRACE_MGNO    = V_TRACE_MGNO
+                    AND    TRACE_SEQ     = V_TRACE_SEQ ;
+								ELSIF V_RESOLVED_YN = 'N' THEN
+                	  UPDATE DAA015MS
+                    SET    TRACE_DATE    = V_TRACE_DATE ,
+                           TRACE_TEXT    = V_TRACE_TEXT ,
+                           TRACE_DEPT_CD = V_TRACE_DEPT_CD,
+                           RESOLVED_YN   = 'N',
+                           RESOLVED_ON   = NULL,
+                           RESOLVED_BY   = NULL,
+                           U_EMP_NO      = V_EMP_NO ,
+                           U_DATE        = SYSDATE ,
+                           U_IP          = V_IP
+                    WHERE  TRACE_MGNO    = V_TRACE_MGNO
+                    AND    TRACE_SEQ     = V_TRACE_SEQ ;
+                END IF;
+                V_RET := 'OK';
+        EXCEPTION
+        WHEN OTHERS THEN
+                V_RET := FN_GETERROR(SQLCODE)
+                || CHR(13)
+                || CHR(10)
+                || '[PR_11] 트레이스 수정시 에러 발생.';
+	END PR_11;
+	PROCEDURE PR_12
+       (
+               V_TRACE_MGNO IN VARCHAR2 ,
+               V_TRACE_SEQ  IN NUMBER ,
+               V_EMP_NO     IN VARCHAR2 ,
+               V_IP         IN VARCHAR2 ,
+               V_RET OUT       VARCHAR2
+       ) AS
+        BEGIN
+                IF V_TRACE_MGNO IS NULL THEN
+                        RAISE_APPLICATION_ERROR(-20010, '관리번호가 없습니다. 전산담당자에게 문의 하시기 바랍니다.');
+                ELSIF V_TRACE_SEQ IS NULL THEN
+                        RAISE_APPLICATION_ERROR(-20011, '관리순번이 없습니다. 전산담당자에게 문의 하시기 바랍니다.');
+                END IF;
+                UPDATE DAA015MS
+                   SET DEL_YN = 'Y',
+                       U_EMP_NO   = V_EMP_NO,
+                       U_DATE     = SYSDATE,
+                       U_IP       = V_IP
+                 WHERE TRACE_MGNO = V_TRACE_MGNO
+                   AND TRACE_SEQ  = V_TRACE_SEQ;
+
+                V_RET := 'OK';
+  EXCEPTION
+  WHEN OTHERS THEN
+          V_RET := FN_GETERROR(SQLCODE)
+          || CHR(13)
+          || CHR(10)
+          || '[PR_12] 트레이스 삭제시 에러발생.';
+  END PR_12;
+
+  -- 미사용
+	PROCEDURE PR_20
+       (
+               V_RSV_NO     IN VARCHAR2 ,
+               V_TRACE_MGNO IN VARCHAR2 ,
+               V_EMP_NO     IN VARCHAR2 ,
+               V_IP         IN VARCHAR2 ,
+               V_RET OUT       VARCHAR2
+       ) AS
+        BEGIN
+                IF V_RSV_NO IS NULL THEN
+                        RAISE_APPLICATION_ERROR(-20013, '예약번호가 없습니다. 전산담당자에게 문의 하시기 바랍니다.');
+                ELSIF V_TRACE_MGNO IS NULL THEN
+                        RAISE_APPLICATION_ERROR(-20010, '관리번호가 없습니다. 전산담당자에게 문의 하시기 바랍니다.');
+                END IF;
+                UPDATE CAA010MS
+                SET    TRACE_MGNO = V_TRACE_MGNO ,
+                       U_EMP_NO   = V_EMP_NO ,
+                       U_DATE     = SYSDATE ,
+                       U_IP       = V_IP
+                WHERE  RSV_NO     = V_RSV_NO ;
+
+                UPDATE DAA010MS U1
+                SET    U1.TRACE_MGNO = V_TRACE_MGNO ,
+                       U1.U_EMP_NO   = V_EMP_NO ,
+                       U1.U_DATE     = SYSDATE ,
+                       U1.U_IP       = V_IP
+                WHERE  MNG_NO        =
+                       ( SELECT S1.MNG_NO
+                       FROM    DZA900MS S1
+                       WHERE   S1.RSV_NO = V_RSV_NO
+                       ) ;
+
+                V_RET := 'OK';
+  EXCEPTION
+  WHEN OTHERS THEN
+          V_RET := FN_GETERROR(SQLCODE)
+          || CHR(13)
+          || CHR(10)
+          || '[PR_20] 트레이스관리번호 저장시 에러발생.';
+  END PR_20;
+
+
+
+--dt.Rows.Add(new object[] { "V_RSV_NO", rsvNo });
+--dt.Rows.Add(new object[] { "V_TRACE_DATE", traceDate });
+--dt.Rows.Add(new object[] { "V_TRACE_TEXT", TraceTextMemoEdit.EditValue.ToString().Trim() });
+--dt.Rows.Add(new object[] { "V_TRACE_DEPT_CD", lupRespDeptCode.EditValue.ToString().Trim() });
+--dt.Rows.Add(new object[] { "V_EMP_NO", Parm.CurrentUserInformation.id });
+--dt.Rows.Add(new object[] { "V_IP", Parm.CurrentUserInformation.ip });
+
+	PROCEDURE PR_30
+  (
+  	V_RSV_NO	   IN VARCHAR2,
+    V_TRACE_DATE IN DATE,
+    V_TRACE_TEXT IN VARCHAR2,
+    V_TRACE_DEPT_CD IN VARCHAR2,
+    V_EMP_NO     IN VARCHAR2 ,
+		V_IP         IN VARCHAR2 ,
+		V_RET OUT       VARCHAR2
+  ) AS
+
+  	P_TRACE_MGNO VARCHAR2(100);
+    P_TRACE_SEQ  VARCHAR2(100);
+
+  BEGIN
+  	IF V_RSV_NO IS NULL THEN
+			RAISE_APPLICATION_ERROR(-20013, '예약번호가 없습니다. 전산담당자에게 문의 하시기 바랍니다.');
+    END IF;
+
+    SELECT T1.TRACE_MGNO
+      INTO P_TRACE_MGNO
+      FROM CAA010MS T1
+     WHERE T1.RSV_NO = V_RSV_NO;
+
+
+    IF P_TRACE_MGNO IS NULL THEN
+
+    	-- 신규 등록인 케이스
+      -- 관리번호부터 딴 다음, 예약 테이블에 업데이트 치고,
+      -- 해당 데이터를 저장하도록 한다.
+      SELECT FN_GET_WNDW_MGNO_HEX
+        INTO P_TRACE_MGNO
+        FROM DUAL;
+
+      UPDATE CAA010MS
+         SET TRACE_MGNO = P_TRACE_MGNO,
+             U_EMP_NO   = V_EMP_NO,
+             U_DATE     = SYSDATE,
+             U_IP       = V_IP
+       WHERE RSV_NO     = V_RSV_NO;
+
+		END IF;
+
+    SELECT NVL(MAX(S1.TRACE_SEQ), 0) + 1
+    	INTO P_TRACE_SEQ
+      FROM DAA015MS S1
+     WHERE S1.TRACE_MGNO = P_TRACE_MGNO;
+
+
+
+
+      INSERT
+        INTO DAA015MS
+             (
+                TRACE_MGNO
+              , TRACE_SEQ
+              , TRACE_DATE
+              , TRACE_TEXT
+              , TRACE_DEPT_CD
+              , I_EMP_NO
+              , I_DATE
+              , I_IP
+              , U_EMP_NO
+              , U_DATE
+              , U_IP
+              , RMRK
+             )
+             VALUES
+             (
+                P_TRACE_MGNO
+              , P_TRACE_SEQ
+              , V_TRACE_DATE
+              , V_TRACE_TEXT
+              , V_TRACE_DEPT_CD
+              , V_EMP_NO -- I_EMP_NO
+              , SYSDATE -- I_DATE
+              , V_IP -- I_IP
+              , V_EMP_NO -- U_EMP_NO
+              , SYSDATE -- U_DATE
+              , V_IP -- U_IP
+              , V_TRACE_DATE || ' / ' || V_TRACE_TEXT || ' / ' || V_RSV_NO || ' / ' || ' / ' || V_EMP_NO || TO_CHAR(SYSDATE, 'YYYY-MM-DD')
+             );
+
+
+             -- 히스토리 등록
+             INSERT INTO
+                DAA015HS (
+                 TRACE_MGNO
+                ,TRACE_SEQ
+                ,GEN_SEQ
+                ,TRACE_DATE
+                ,TRACE_TEXT
+                ,RESOLVED_BY
+                ,RESOLVED_ON
+                ,RESOLVED_YN
+                ,I_EMP_NO
+                ,I_DATE
+                ,I_IP )
+              VALUES (
+                 P_TRACE_MGNO
+                ,P_TRACE_SEQ
+                ,(
+                  SELECT NVL(MAX(S1.GEN_SEQ), 0) + 1
+                    FROM DAA015HS S1
+                   WHERE S1.TRACE_MGNO = P_TRACE_MGNO
+                     AND S1.TRACE_SEQ  = P_TRACE_SEQ
+                 )
+                ,V_TRACE_DATE
+                ,V_TRACE_TEXT
+                ,NULL
+                ,NULL
+                ,'N'
+                ,V_EMP_NO
+                ,SYSDATE
+                ,V_IP
+              );
+
+
+            V_RET := 'OK';
+  EXCEPTION
+  WHEN OTHERS THEN
+          V_RET := FN_GETERROR(SQLCODE)
+          || CHR(13)
+          || CHR(10)
+          || '[PR_30] 트레이스 등록 저장시 에러발생.';
+  END PR_30;
+
+
+--dt.Rows.Add(new object[] { "V_RSV_NO", rsvNo });
+--dt.Rows.Add(new object[] { "V_TRACE_MGNO", traceMgno});
+--dt.Rows.Add(new object[] { "V_TRACE_SEQ", int.Parse(traceSeq) });
+--dt.Rows.Add(new object[] { "V_TRACE_DATE", traceDate });
+--dt.Rows.Add(new object[] { "V_TRACE_TEXT", TraceTextMemoEdit.EditValue.ToString().Trim() });
+--dt.Rows.Add(new object[] { "V_TRACE_DEPT_CD", lupRespDeptCode.EditValue.ToString().Trim() });
+--dt.Rows.Add(new object[] { "V_RESOLVED_YN", lupIsResolved.EditValue.ToString().Trim() });
+--dt.Rows.Add(new object[] { "V_EMP_NO", Parm.CurrentUserInformation.id });
+--dt.Rows.Add(new object[] { "V_IP", Parm.CurrentUserInformation.ip });
+
+	PROCEDURE PR_31
+   (
+       V_RSV_NO     IN VARCHAR2,
+       V_TRACE_MGNO IN VARCHAR2 ,
+       V_TRACE_SEQ  IN NUMBER ,
+       V_TRACE_DATE IN DATE ,
+       V_TRACE_TEXT IN VARCHAR2 ,
+       V_TRACE_DEPT_CD IN VARCHAR2 ,
+       V_RESOLVED_YN IN VARCHAR2 ,
+       V_EMP_NO     IN VARCHAR2 ,
+       V_IP         IN VARCHAR2 ,
+       V_RET OUT       VARCHAR2
+   ) AS
+
+   P_TRACE_MGNO VARCHAR2(100);
+   P_TRACE_SEQ NUMBER;
+
+  BEGIN
+    IF V_RSV_NO IS NULL THEN
+            RAISE_APPLICATION_ERROR(-20009, '예약번호가 없습니다. 전산담당자에게 문의 하시기 바랍니다.');
+    ELSIF V_TRACE_MGNO IS NULL THEN
+            RAISE_APPLICATION_ERROR(-20010, '관리번호가 없습니다. 전산담당자에게 문의 하시기 바랍니다.');
+    ELSIF V_TRACE_SEQ IS NULL THEN
+            RAISE_APPLICATION_ERROR(-20011, '관리순번이 없습니다. 전산담당자에게 문의 하시기 바랍니다.');
+    ELSIF V_TRACE_DATE IS NULL THEN
+            RAISE_APPLICATION_ERROR(-20012, '트레이스 날짜를 입력하셔야 합니다.');
+    END IF;
+
+
+		SELECT T1.TRACE_MGNO, T2.TRACE_SEQ
+      INTO P_TRACE_MGNO, P_TRACE_SEQ
+      FROM CAA010MS T1
+     INNER JOIN DAA015MS T2
+        ON T1.TRACE_MGNO = T2.TRACE_MGNO
+     WHERE T1.RSV_NO = V_RSV_NO
+       AND T2.TRACE_SEQ = V_TRACE_SEQ;
+
+    IF P_TRACE_MGNO IS NULL OR P_TRACE_SEQ IS NULL THEN
+            RAISE_APPLICATION_ERROR(-20013, '수정할 트레이스 정보가 일치하지 않습니다. 전산담당자에게 문의 하시기 바랍니다.');
+    END IF;
+
+    IF V_RESOLVED_YN = 'Y' THEN
+        UPDATE DAA015MS
+        SET    TRACE_DATE    = V_TRACE_DATE ,
+               TRACE_TEXT    = V_TRACE_TEXT ,
+               TRACE_DEPT_CD = V_TRACE_DEPT_CD,
+               RESOLVED_YN   = 'Y',
+               RESOLVED_ON   = SYSDATE,
+               RESOLVED_BY   = V_EMP_NO,
+               U_EMP_NO      = V_EMP_NO ,
+               U_DATE        = SYSDATE ,
+               U_IP          = V_IP ,
+               RMRK          = RMRK || ' // ' || V_TRACE_TEXT || ' / ' || V_RSV_NO || ' / ' || ' / ' || V_EMP_NO || '/' || TO_CHAR(SYSDATE, 'YYYY-MM-DD')
+        WHERE  TRACE_MGNO    = V_TRACE_MGNO
+        AND    TRACE_SEQ     = V_TRACE_SEQ ;
+
+        -- 히스토리 등록
+        INSERT INTO
+            DAA015HS (
+             TRACE_MGNO
+            ,TRACE_SEQ
+            ,GEN_SEQ
+            ,TRACE_DATE
+            ,TRACE_TEXT
+            ,RESOLVED_BY
+            ,RESOLVED_ON
+            ,RESOLVED_YN
+            ,I_EMP_NO
+            ,I_DATE
+            ,I_IP )
+        VALUES (
+             P_TRACE_MGNO
+            ,P_TRACE_SEQ
+            ,(
+              SELECT NVL(MAX(S1.GEN_SEQ), 0) + 1
+                FROM DAA015HS S1
+               WHERE S1.TRACE_MGNO = P_TRACE_MGNO
+                 AND S1.TRACE_SEQ  = P_TRACE_SEQ
+             )
+            ,V_TRACE_DATE
+            ,V_TRACE_TEXT
+            ,V_EMP_NO
+            ,SYSDATE
+            ,'Y'
+            ,V_EMP_NO
+            ,SYSDATE
+            ,V_IP
+        );
+
+    ELSIF V_RESOLVED_YN = 'N' THEN
+        UPDATE DAA015MS
+        SET    TRACE_DATE    = V_TRACE_DATE ,
+               TRACE_TEXT    = V_TRACE_TEXT ,
+               TRACE_DEPT_CD = V_TRACE_DEPT_CD,
+               RESOLVED_YN   = 'N',
+               RESOLVED_ON   = NULL,
+               RESOLVED_BY   = NULL,
+               U_EMP_NO      = V_EMP_NO ,
+               U_DATE        = SYSDATE ,
+               U_IP          = V_IP,
+               RMRK          = RMRK || ' // ' || V_TRACE_TEXT || ' / ' || V_RSV_NO || ' / ' || ' / ' || V_EMP_NO || '/' || TO_CHAR(SYSDATE, 'YYYY-MM-DD')
+        WHERE  TRACE_MGNO    = V_TRACE_MGNO
+        AND    TRACE_SEQ     = V_TRACE_SEQ ;
+
+
+        -- 히스토리 등록
+        INSERT INTO
+            DAA015HS (
+             TRACE_MGNO
+            ,TRACE_SEQ
+            ,GEN_SEQ
+            ,TRACE_DATE
+            ,TRACE_TEXT
+            ,RESOLVED_BY
+            ,RESOLVED_ON
+            ,RESOLVED_YN
+            ,I_EMP_NO
+            ,I_DATE
+            ,I_IP )
+        VALUES (
+             P_TRACE_MGNO
+            ,P_TRACE_SEQ
+            ,(
+              SELECT NVL(MAX(S1.GEN_SEQ), 0) + 1
+                FROM DAA015HS S1
+               WHERE S1.TRACE_MGNO = P_TRACE_MGNO
+                 AND S1.TRACE_SEQ  = P_TRACE_SEQ
+             )
+            ,V_TRACE_DATE
+            ,V_TRACE_TEXT
+            ,NULL
+            ,NULL
+            ,'N'
+            ,V_EMP_NO
+            ,SYSDATE
+            ,V_IP
+        );
+
+
+
+    END IF;
+
+
+
+
+
+    V_RET := 'OK';
+  EXCEPTION
+  WHEN OTHERS THEN
+          V_RET := FN_GETERROR(SQLCODE)
+          || CHR(13)
+          || CHR(10)
+          || '[PR_31] 트레이스 수정시 에러 발생.';
+	END PR_31;
+
+
+	PROCEDURE PR_40
+  (
+  	V_MNG_NO	      IN VARCHAR2,
+    V_TRACE_DATE 	  IN DATE,
+    V_TRACE_TEXT 		IN VARCHAR2,
+    V_TRACE_DEPT_CD IN VARCHAR2,
+    V_EMP_NO        IN VARCHAR2 ,
+		V_IP            IN VARCHAR2 ,
+		V_RET          OUT VARCHAR2
+  ) AS
+
+  	P_RSV_NO VARCHAR2(100);
+  	P_TRACE_MGNO VARCHAR2(100);
+    P_TRACE_SEQ  VARCHAR2(100);
+  BEGIN
+  	IF V_MNG_NO IS NULL THEN
+			RAISE_APPLICATION_ERROR(-20013, '관리번호가 없습니다. 전산담당자에게 문의 하시기 바랍니다.');
+    END IF;
+
+    -- 관리번호로 일단 예약정보 확인. 예약번호 매핑된 경우면, 예약정보에서 트레이스 생성하기.
+    SELECT T2.RSV_NO
+      INTO P_RSV_NO
+      FROM DAA010MS T1
+     INNER JOIN DZA900MS T2
+        ON T1.MNG_NO = T2.MNG_NO
+     WHERE T1.MNG_NO = V_MNG_NO
+       AND T1.MNG_SEQ = 1;
+
+     IF P_RSV_NO IS NOT NULL THEN
+
+       SELECT T1.TRACE_MGNO
+        INTO P_TRACE_MGNO
+        FROM CAA010MS T1
+       WHERE T1.RSV_NO = P_RSV_NO;
+
+       IF P_TRACE_MGNO IS NULL THEN
+          -- 신규 등록인 케이스
+          -- 관리번호부터 딴 다음, 예약 테이블에 업데이트 치고,
+          -- 해당 데이터를 저장하도록 한다.
+          SELECT FN_GET_WNDW_MGNO_HEX
+            INTO P_TRACE_MGNO
+            FROM DUAL;
+
+          UPDATE CAA010MS
+             SET TRACE_MGNO = P_TRACE_MGNO,
+                 U_EMP_NO   = V_EMP_NO,
+                 U_DATE     = SYSDATE,
+                 U_IP       = V_IP
+           WHERE RSV_NO     = P_RSV_NO;
+        END IF;
+
+        SELECT NVL(MAX(S1.TRACE_SEQ), 0) + 1
+          INTO P_TRACE_SEQ
+          FROM DAA015MS S1
+         WHERE S1.TRACE_MGNO = P_TRACE_MGNO;
+
+
+
+        -- 예약관련
+        INSERT
+        INTO DAA015MS
+             (
+                TRACE_MGNO
+              , TRACE_SEQ
+              , TRACE_DATE
+              , TRACE_TEXT
+              , TRACE_DEPT_CD
+              , I_EMP_NO
+              , I_DATE
+              , I_IP
+              , U_EMP_NO
+              , U_DATE
+              , U_IP
+              , RMRK
+             )
+             VALUES
+             (
+                P_TRACE_MGNO
+              , P_TRACE_SEQ
+              , V_TRACE_DATE
+              , V_TRACE_TEXT
+              , V_TRACE_DEPT_CD
+              , V_EMP_NO -- I_EMP_NO
+              , SYSDATE -- I_DATE
+              , V_IP -- I_IP
+              , V_EMP_NO -- U_EMP_NO
+              , SYSDATE -- U_DATE
+              , V_IP -- U_IP
+              , V_TRACE_DATE || ' / ' || V_TRACE_TEXT || ' / ' || P_RSV_NO || ' / ' || ' / ' || V_EMP_NO || TO_CHAR(SYSDATE, 'YYYY-MM-DD')
+             );
+
+						 -- 히스토리 등록
+             INSERT INTO
+                DAA015HS (
+                 TRACE_MGNO
+                ,TRACE_SEQ
+                ,GEN_SEQ
+                ,TRACE_DATE
+                ,TRACE_TEXT
+                ,RESOLVED_BY
+                ,RESOLVED_ON
+                ,RESOLVED_YN
+                ,I_EMP_NO
+                ,I_DATE
+                ,I_IP )
+              VALUES (
+                 P_TRACE_MGNO
+                ,P_TRACE_SEQ
+                ,(
+                  SELECT NVL(MAX(S1.GEN_SEQ), 0) + 1
+                    FROM DAA015HS S1
+                   WHERE S1.TRACE_MGNO = P_TRACE_MGNO
+                     AND S1.TRACE_SEQ  = P_TRACE_SEQ
+                 )
+                ,V_TRACE_DATE
+                ,V_TRACE_TEXT
+                ,NULL
+                ,NULL
+                ,'N'
+                ,V_EMP_NO
+                ,SYSDATE
+                ,V_IP
+              );
+
+    	ELSIF P_RSV_NO IS NULL THEN
+       -- 관리번호에 해당하는 에약번호가 없는 경우. 직접 재실정보에서 관리번호 유무를 체크한다.
+       SELECT T1.TRACE_MGNO
+        INTO P_TRACE_MGNO
+        FROM DAA010MS T1
+       WHERE T1.MNG_NO = V_MNG_NO
+		--   AND T1.CHECKIN_TYPE = '3'  -- 종전 데이터와 비교하는 형태로 하여,
+         AND T1.MNG_SEQ = 1;
+
+       IF P_TRACE_MGNO IS NULL THEN
+          -- 트레이스 번호가 없으면 신규 등록인 케이스
+          -- 관리번호부터 딴 다음, 예약 테이블에 업데이트 치고,
+          -- 해당 데이터를 저장하도록 한다.
+          SELECT FN_GET_WNDW_MGNO_HEX
+            INTO P_TRACE_MGNO
+            FROM DUAL;
+
+          UPDATE DAA010MS
+             SET TRACE_MGNO = P_TRACE_MGNO,
+                 U_EMP_NO   = V_EMP_NO,
+                 U_DATE     = SYSDATE,
+                 U_IP       = V_IP
+           WHERE MNG_NO     = V_MNG_NO
+             AND MNG_SEQ    = 1;
+        END IF;
+
+        SELECT NVL(MAX(S1.TRACE_SEQ), 0) + 1
+          INTO P_TRACE_SEQ
+          FROM DAA015MS S1
+         WHERE S1.TRACE_MGNO = P_TRACE_MGNO;
+
+
+
+        --재실관련
+        INSERT
+        INTO DAA015MS
+             (
+                TRACE_MGNO
+              , TRACE_SEQ
+              , TRACE_DATE
+              , TRACE_TEXT
+              , TRACE_DEPT_CD
+              , I_EMP_NO
+              , I_DATE
+              , I_IP
+              , U_EMP_NO
+              , U_DATE
+              , U_IP
+              , RMRK
+             )
+             VALUES
+             (
+                P_TRACE_MGNO
+              , P_TRACE_SEQ
+              , V_TRACE_DATE
+              , V_TRACE_TEXT
+              , V_TRACE_DEPT_CD
+              , V_EMP_NO -- I_EMP_NO
+              , SYSDATE -- I_DATE
+              , V_IP -- I_IP
+              , V_EMP_NO -- U_EMP_NO
+              , SYSDATE -- U_DATE
+              , V_IP -- U_IP
+              , V_TRACE_DATE || ' / ' || V_TRACE_TEXT || ' / ' || V_MNG_NO || ' / ' || ' / ' || V_EMP_NO || TO_CHAR(SYSDATE, 'YYYY-MM-DD')
+             );
+
+             -- 히스토리 등록
+             INSERT INTO
+                DAA015HS (
+                 TRACE_MGNO
+                ,TRACE_SEQ
+                ,GEN_SEQ
+                ,TRACE_DATE
+                ,TRACE_TEXT
+                ,RESOLVED_BY
+                ,RESOLVED_ON
+                ,RESOLVED_YN
+                ,I_EMP_NO
+                ,I_DATE
+                ,I_IP )
+              VALUES (
+                 P_TRACE_MGNO
+                ,P_TRACE_SEQ
+                ,(
+                  SELECT NVL(MAX(S1.GEN_SEQ), 0) + 1
+                    FROM DAA015HS S1
+                   WHERE S1.TRACE_MGNO = P_TRACE_MGNO
+                     AND S1.TRACE_SEQ  = P_TRACE_SEQ
+                 )
+                ,V_TRACE_DATE
+                ,V_TRACE_TEXT
+                ,NULL
+                ,NULL
+                ,'N'
+                ,V_EMP_NO
+                ,SYSDATE
+                ,V_IP
+              );
+
+    END IF;
+            V_RET := 'OK';
+  EXCEPTION
+  WHEN OTHERS THEN
+          V_RET := FN_GETERROR(SQLCODE)
+          || CHR(13)
+          || CHR(10)
+          || '[PR_40] 트레이스 등록 저장시 에러발생.';
+  END PR_40;
+
+
+
+
+	PROCEDURE PR_41
+   (
+       V_MNG_NO     IN VARCHAR2,
+       V_TRACE_MGNO IN VARCHAR2 ,
+       V_TRACE_SEQ  IN NUMBER ,
+       V_TRACE_DATE IN DATE ,
+       V_TRACE_TEXT IN VARCHAR2 ,
+       V_TRACE_DEPT_CD IN VARCHAR2 ,
+       V_RESOLVED_YN IN VARCHAR2 ,
+       V_EMP_NO     IN VARCHAR2 ,
+       V_IP         IN VARCHAR2 ,
+       V_RET OUT       VARCHAR2
+   ) AS
+
+   P_RSV_NO VARCHAR2(100);
+   P_TRACE_MGNO VARCHAR2(100);
+   P_TRACE_SEQ NUMBER;
+
+  BEGIN
+    IF V_MNG_NO IS NULL THEN
+            RAISE_APPLICATION_ERROR(-20009, '재실관리번호가 없습니다. 전산담당자에게 문의 하시기 바랍니다.');
+    ELSIF V_TRACE_MGNO IS NULL THEN
+            RAISE_APPLICATION_ERROR(-20010, '트레이스관리번호가 없습니다. 전산담당자에게 문의 하시기 바랍니다.');
+    ELSIF V_TRACE_SEQ IS NULL THEN
+            RAISE_APPLICATION_ERROR(-20011, '트레이스관리순번이 없습니다. 전산담당자에게 문의 하시기 바랍니다.');
+    ELSIF V_TRACE_DATE IS NULL THEN
+            RAISE_APPLICATION_ERROR(-20012, '트레이스 날짜를 입력하셔야 합니다.');
+    END IF;
+
+
+		SELECT T1.TRACE_MGNO, T2.TRACE_SEQ
+      INTO P_TRACE_MGNO, P_TRACE_SEQ
+      FROM DAA010MS T1
+     INNER JOIN DAA015MS T2
+        ON T1.TRACE_MGNO = T2.TRACE_MGNO
+     WHERE T1.MNG_NO = V_MNG_NO
+       AND T1.MNG_SEQ = 1
+       --AND T1.CHECKIN_TYPE IN ('3')
+       AND T2.TRACE_SEQ = V_TRACE_SEQ;
+
+    IF P_TRACE_MGNO IS NULL OR P_TRACE_SEQ IS NULL THEN
+            RAISE_APPLICATION_ERROR(-20013, '수정할 트레이스 정보가 일치하지 않습니다. 전산담당자에게 문의 하시기 바랍니다.');
+    END IF;
+
+    IF V_RESOLVED_YN = 'Y' THEN
+        UPDATE DAA015MS
+        SET    TRACE_DATE    = V_TRACE_DATE ,
+               TRACE_TEXT    = V_TRACE_TEXT ,
+               TRACE_DEPT_CD = V_TRACE_DEPT_CD,
+               RESOLVED_YN   = 'Y',
+               RESOLVED_ON   = SYSDATE,
+               RESOLVED_BY   = V_EMP_NO,
+               U_EMP_NO      = V_EMP_NO ,
+               U_DATE        = SYSDATE ,
+               U_IP          = V_IP ,
+               RMRK          = RMRK || ' // ' || V_TRACE_TEXT || ' / ' || V_MNG_NO || ' / ' || ' / ' || V_EMP_NO || '/' || TO_CHAR(SYSDATE, 'YYYY-MM-DD')
+        WHERE  TRACE_MGNO    = V_TRACE_MGNO
+        AND    TRACE_SEQ     = V_TRACE_SEQ ;
+
+        -- 히스토리 등록
+        INSERT INTO
+            DAA015HS (
+             TRACE_MGNO
+            ,TRACE_SEQ
+            ,GEN_SEQ
+            ,TRACE_DATE
+            ,TRACE_TEXT
+            ,RESOLVED_BY
+            ,RESOLVED_ON
+            ,RESOLVED_YN
+            ,I_EMP_NO
+            ,I_DATE
+            ,I_IP )
+        VALUES (
+             P_TRACE_MGNO
+            ,P_TRACE_SEQ
+            ,(
+              SELECT NVL(MAX(S1.GEN_SEQ), 0) + 1
+                FROM DAA015HS S1
+               WHERE S1.TRACE_MGNO = P_TRACE_MGNO
+                 AND S1.TRACE_SEQ  = P_TRACE_SEQ
+             )
+            ,V_TRACE_DATE
+            ,V_TRACE_TEXT
+            ,V_EMP_NO
+            ,SYSDATE
+            ,'Y'
+            ,V_EMP_NO
+            ,SYSDATE
+            ,V_IP
+        );
+
+
+    ELSIF V_RESOLVED_YN = 'N' THEN
+        UPDATE DAA015MS
+        SET    TRACE_DATE    = V_TRACE_DATE ,
+               TRACE_TEXT    = V_TRACE_TEXT ,
+               TRACE_DEPT_CD = V_TRACE_DEPT_CD,
+               RESOLVED_YN   = 'N',
+               RESOLVED_ON   = NULL,
+               RESOLVED_BY   = NULL,
+               U_EMP_NO      = V_EMP_NO ,
+               U_DATE        = SYSDATE ,
+               U_IP          = V_IP,
+               RMRK          = RMRK || ' // ' || V_TRACE_TEXT || ' / ' || V_MNG_NO || ' / ' || ' / ' || V_EMP_NO || '/' || TO_CHAR(SYSDATE, 'YYYY-MM-DD')
+        WHERE  TRACE_MGNO    = V_TRACE_MGNO
+        AND    TRACE_SEQ     = V_TRACE_SEQ ;
+
+        -- 히스토리 등록
+        INSERT INTO
+            DAA015HS (
+             TRACE_MGNO
+            ,TRACE_SEQ
+            ,GEN_SEQ
+            ,TRACE_DATE
+            ,TRACE_TEXT
+            ,RESOLVED_BY
+            ,RESOLVED_ON
+            ,RESOLVED_YN
+            ,I_EMP_NO
+            ,I_DATE
+            ,I_IP )
+        VALUES (
+             P_TRACE_MGNO
+            ,P_TRACE_SEQ
+            ,(
+              SELECT NVL(MAX(S1.GEN_SEQ), 0) + 1
+                FROM DAA015HS S1
+               WHERE S1.TRACE_MGNO = P_TRACE_MGNO
+                 AND S1.TRACE_SEQ  = P_TRACE_SEQ
+             )
+            ,V_TRACE_DATE
+            ,V_TRACE_TEXT
+            ,NULL
+            ,NULL
+            ,'N'
+            ,V_EMP_NO
+            ,SYSDATE
+            ,V_IP
+        );
+
+
+    END IF;
+    V_RET := 'OK';
+  EXCEPTION
+  WHEN OTHERS THEN
+          V_RET := FN_GETERROR(SQLCODE)
+          || CHR(13)
+          || CHR(10)
+          || '[PR_41] 재실트레이스 수정시 에러 발생.';
+	END PR_41;
+
+
+
+
+	PROCEDURE PR_50
+  (
+      V_TRACE_MGNO  IN VARCHAR2,
+      V_TRACE_SEQ   IN VARCHAR2,
+      V_RS				 OUT RS
+
+  ) AS
+
+  BEGIN
+  	 OPEN V_RS FOR
+        SELECT TRACE_MGNO
+             , TRACE_SEQ
+             , GEN_SEQ
+             , TRACE_DATE
+             , TRACE_TEXT
+             , RESOLVED_BY
+             , FN_GET_EMP_NAME(RESOLVED_BY) AS RESOLVED_BY_NAME
+             , RESOLVED_ON
+             , RESOLVED_YN
+             , I_EMP_NO
+             , FN_GET_EMP_NAME(I_EMP_NO) AS I_EMP_NAME
+             , I_DATE
+             , I_IP
+          FROM DAA015HS
+         WHERE TRACE_MGNO = V_TRACE_MGNO
+           AND TRACE_SEQ  = V_TRACE_SEQ
+         ORDER BY GEN_SEQ DESC;
+  END PR_50;
+
+
+
+	PROCEDURE PR_60
+    (
+    	V_MNG_NO IN VARCHAR2,
+      V_MNG_SEQ IN VARCHAR2,
+      V_TRACE_MGNO  OUT VARCHAR2
+    ) AS
+    BEGIN
+    	IF V_MNG_NO IS NULL THEN
+      	RAISE_APPLICATION_ERROR(-20010, '관리번호가 없습니다. 전산담당자에게 문의하시기 바랍니다.');
+      END IF;
+
+      SELECT TRACE_MGNO
+        INTO V_TRACE_MGNO
+        FROM DAA010MS
+       WHERE MNG_NO = V_MNG_NO
+         AND MNG_SEQ = V_MNG_SEQ;
+
+    END PR_60;
+
+END PKG_DAAAI19;
