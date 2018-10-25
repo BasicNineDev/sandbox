@@ -1,4 +1,4 @@
-CREATE OR REPLACE PACKAGE BODY IPARKUSER.PKG_CBRAS04  AS
+CREATE OR REPLACE PACKAGE BODY IPARKTEST.PKG_CBRAS04  AS
   /*============================================================================
      시스템명        : 도착예정자현황
      작 성일         : 2010.01.30
@@ -398,6 +398,25 @@ CREATE OR REPLACE PACKAGE BODY IPARKUSER.PKG_CBRAS04  AS
                                 WHERE S1.BIZ_CODE = T1.BIZ_CODE
                                   AND S1.RSV_NO = T1.RSV_NO
                                   AND S1.DEL_YN = 'N')) AS WNS_MSG
+        ,(SELECT S1.MSG_CODE
+             FROM DAA021MS S1
+            WHERE S1.BIZ_CODE = T1.BIZ_CODE
+              AND S1.RSV_NO   = T1.RSV_NO
+              AND S1.DEL_YN = 'N') AS BF_MSG_CODE
+         ,(SELECT Z1.DETAIL_NAME
+             FROM ZXA010MS Z1
+            WHERE Z1.BIZ_CODE = T1.BIZ_CODE
+              AND Z1.HEAD = 'DA021'
+              AND Z1.DETAIL = (SELECT S1.MSG_CODE
+                                 FROM DAA021MS S1
+                                WHERE S1.BIZ_CODE = T1.BIZ_CODE
+                                  AND S1.RSV_NO = T1.RSV_NO
+                                  AND S1.DEL_YN = 'N')) AS BF_MSG
+         ,(SELECT S1.RMRK
+             FROM DAA021MS S1
+            WHERE S1.BIZ_CODE = T1.BIZ_CODE
+              AND S1.RSV_NO   = T1.RSV_NO
+              AND S1.DEL_YN = 'N') AS BF_MSG_RMRK
         FROM CAA010MS T1
        INNER JOIN BBA001VE T2
           ON T1.BIZ_CODE  = T2.BIZ_CODE
